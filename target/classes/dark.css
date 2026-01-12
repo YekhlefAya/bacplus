@@ -1,0 +1,20 @@
+.root {
+    -primary-color: #8C84FF;
+    -secondary-color: #2D2D44;
+    -background-color: #1A1A2E;
+    -surface-color: #16213E;
+    -text-color: #E2E2E2;
+    -text-muted: #B2B2B2;
+    -success-color: #00D1A0;
+    -error-color: #FF5E5E;
+    -warning-color: #FFD166;
+    -border-color: #2E2E3E;
+}
+
+.view-pane {
+    -fx-background-color: -background-color;
+}
+
+.card {
+    -fx-background-color: -surface-color;
+}
