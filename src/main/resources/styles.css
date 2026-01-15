@@ -2,19 +2,33 @@
     -fx-font-family: 'Segoe UI', sans-serif;
     -background-color: #FFFFFF;
     -text-color: #333333;
+    -text-muted: #666666;
     -primary-color: #6C63FF;
     -primary-hover: #5a52d5;
     -secondary-color: #F0F0F0;
     -surface-color: #F8F9FA;
     -shadow-color: rgba(0, 0, 0, 0.1);
+    -success-color: #4CAF50;
+    -success-bg: #E8F5E9;
+    -error-color: #F44336;
+    -error-bg: #FFEBEE;
+    -warning-color: #FFC107;
+    -warning-bg: #FFF8E1;
 }
 
 .dark-mode {
     -background-color: #121212;
-    -text-color: #FFFFFF;
+    -text-color: #E2E2E2;
+    -text-muted: #B2B2B2;
     -secondary-color: #2C2C2C;
     -surface-color: #1E1E1E;
     -shadow-color: rgba(0, 0, 0, 0.5);
+    -success-color: #81C784;
+    -success-bg: rgba(76, 175, 80, 0.2);
+    -error-color: #E57373;
+    -error-bg: rgba(244, 67, 54, 0.2);
+    -warning-color: #FFD54F;
+    -warning-bg: rgba(255, 193, 7, 0.2);
 }
 
 .root-pane {
@@ -48,7 +62,7 @@
 
 .subtitle {
     -fx-font-size: 18px;
-    -fx-text-fill: derive(-text-color, 30%);
+    -fx-text-fill: -text-muted;
 }
 
 .label-bold {
@@ -56,8 +70,14 @@
     -fx-text-fill: -text-color;
 }
 
-.label {
+.label,
+Label {
     -fx-text-fill: -text-color;
+}
+
+.label-small {
+    -fx-font-size: 11px;
+    -fx-text-fill: -text-muted;
 }
 
 /* Buttons */
@@ -107,9 +127,14 @@
 }
 
 .btn-hint {
-    -fx-background-color: #FFF9C4;
-    -fx-text-fill: #FBC02D;
+    -fx-background-color: derive(-primary-color, 80%);
+    -fx-text-fill: -primary-color;
     -fx-background-radius: 20;
+}
+
+.dark-mode .btn-hint {
+    -fx-background-color: rgba(108, 99, 255, 0.2);
+    -fx-text-fill: #A29BFF;
 }
 
 /* Cards & Containers */
@@ -153,18 +178,27 @@
 }
 
 .game-input.neutral {
-    -fx-border-color: #CCCCCC;
-    -fx-background-color: white;
+    -fx-border-color: -secondary-color;
+    -fx-background-color: -surface-color;
+    -fx-text-fill: -text-color;
 }
 
 .game-input.valid {
-    -fx-border-color: #4CAF50;
-    -fx-background-color: #E8F5E9;
+    -fx-border-color: -success-color;
+    -fx-background-color: -success-bg;
+    -fx-text-fill: -text-color;
 }
 
 .game-input.invalid {
-    -fx-border-color: #F44336;
-    -fx-background-color: #FFEBEE;
+    -fx-border-color: -error-color;
+    -fx-background-color: -error-bg;
+    -fx-text-fill: -text-color;
+}
+
+.game-input.pending {
+    -fx-border-color: -warning-color;
+    -fx-background-color: -warning-bg;
+    -fx-text-fill: -text-color;
 }
 
 
@@ -194,15 +228,19 @@
 
 /* Category Management Styles */
 .card-dark {
-    -fx-background-color: #333333;
+    -fx-background-color: -secondary-color;
     -fx-background-radius: 12;
     -fx-padding: 20;
-    -fx-effect: dropshadow(three-pass-box, rgba(0, 0, 0, 0.3), 10, 0, 0, 5);
+    -fx-effect: dropshadow(three-pass-box, -shadow-color, 10, 0, 0, 5);
 }
 
 .label-bold-white {
     -fx-font-weight: bold;
     -fx-text-fill: white;
+}
+
+.dark-mode .label-bold-white {
+    -fx-text-fill: -text-color;
 }
 
 .highlight-text {
@@ -213,13 +251,13 @@
 
 .hint-text {
     -fx-font-size: 12px;
-    -fx-text-fill: derive(-text-color, 30%);
+    -fx-text-fill: -text-muted;
     -fx-font-style: italic;
 }
 
 .hint-text-small {
     -fx-font-size: 10px;
-    -fx-text-fill: derive(-text-color, 50%);
+    -fx-text-fill: -text-muted;
 }
 
 .category-chip {
@@ -236,12 +274,13 @@
     -fx-padding: 10 20;
     -fx-background-color: -secondary-color;
     -fx-background-radius: 5;
+    -fx-border-color: transparent transparent -shadow-color transparent;
 }
 
 .header-col {
     -fx-font-weight: bold;
     -fx-font-size: 12px;
-    -fx-text-fill: derive(-text-color, 30%);
+    -fx-text-fill: -text-muted;
 }
 
 .points-badge {
@@ -326,7 +365,7 @@
 
 .label-hint-small {
     -fx-font-size: 12px;
-    -fx-text-fill: #888;
+    -fx-text-fill: -text-muted;
     -fx-font-style: italic;
 }
 
@@ -345,4 +384,92 @@
     -fx-background-color: rgba(108, 99, 255, 0.05);
     -fx-padding: 15;
     -fx-background-radius: 10;
+}
+
+/* Results Screen Semantics */
+.result-card {
+    -fx-background-color: -surface-color;
+    -fx-padding: 15;
+    -fx-background-radius: 10;
+    -fx-effect: dropshadow(three-pass-box, -shadow-color, 10, 0, 0, 5);
+}
+
+.label-muted {
+    -fx-text-fill: -text-muted;
+}
+
+.score-valid {
+    -fx-text-fill: #4CAF50;
+    -fx-font-weight: bold;
+}
+
+.badge-win {
+    -fx-background-color: #FFD700;
+    -fx-text-fill: #333333;
+    -fx-padding: 2 10;
+    -fx-background-radius: 15;
+    -fx-font-weight: bold;
+}
+
+/* Modern Rankings Styles */
+.ranking-row {
+    -fx-background-color: -surface-color;
+    -fx-background-radius: 15;
+    -fx-padding: 10 20;
+    -fx-spacing: 15;
+    -fx-alignment: center-left;
+    -fx-effect: dropshadow(three-pass-box, -shadow-color, 10, 0, 0, 2);
+    -fx-border-color: rgba(108, 99, 255, 0.1);
+    -fx-border-width: 1;
+    -fx-border-radius: 15;
+}
+
+.ranking-row.current-player {
+    -fx-border-color: -primary-color;
+    -fx-border-width: 2;
+    -fx-background-color: rgba(108, 99, 255, 0.05);
+}
+
+.rank-badge {
+    -fx-min-width: 30;
+    -fx-min-height: 30;
+    -fx-max-width: 30;
+    -fx-max-height: 30;
+    -fx-background-radius: 15;
+    /* Circle-like */
+    -fx-alignment: center;
+    -fx-font-weight: bold;
+    -fx-font-size: 14px;
+}
+
+.rank-1 {
+    -fx-background-color: #FFD700;
+    -fx-text-fill: #333333;
+}
+
+.rank-2 {
+    -fx-background-color: #C0C0C0;
+    -fx-text-fill: #333333;
+}
+
+.rank-3 {
+    -fx-background-color: #CD7F32;
+    -fx-text-fill: #333333;
+}
+
+.rank-other {
+    -fx-background-color: -secondary-color;
+    -fx-text-fill: -text-color;
+}
+
+.player-name-large {
+    -fx-font-size: 16px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -text-color;
+}
+
+.player-score-large {
+    -fx-font-size: 18px;
+    -fx-font-weight: 800;
+    -fx-text-fill: -primary-color;
 }

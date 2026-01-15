@@ -21,6 +21,8 @@ public class GameMessage implements Serializable {
         GAME_END, // Server ends game and sends final rankings
         DISCONNECT, // Player leaves
         SETTINGS_UPDATE, // Host updates game settings (timer, categories)
+        CONNECT_ACK, // Server confirms unique name to client
+        REQUEST_END_GAME, // Client requests game to end
         ERROR // Error message
     }
 

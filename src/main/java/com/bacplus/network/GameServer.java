@@ -117,19 +117,27 @@ public class GameServer {
      * End the game and send final rankings
      */
     public void endGame() {
+        System.out.println("[SERVER] endGame() triggered. Broadcasting final results...");
         gameStarted = false;
 
-        // Sort players by score
-        List<Map.Entry<String, Integer>> rankingsList = new ArrayList<>(playerScores.entrySet());
-        rankingsList.sort((a, b) -> b.getValue().compareTo(a.getValue()));
+        try {
+            // Sort players by score for logging convenience
+            List<Map.Entry<String, Integer>> rankingsList = new ArrayList<>(playerScores.entrySet());
+            rankingsList.sort((a, b) -> b.getValue().compareTo(a.getValue()));
 
-        GameMessage msg = new GameMessage(GameMessage.MessageType.GAME_END);
-        msg.put("rankings", new HashMap<>(playerScores));
-        msg.put("playerWords", new HashMap<>(playerWords));
-        msg.put("playerValidations", new HashMap<>(playerValidations));
-        broadcast(msg);
+            GameMessage msg = new GameMessage(GameMessage.MessageType.GAME_END);
+            msg.put("rankings", new HashMap<>(playerScores));
+            msg.put("playerWords", new HashMap<>(playerWords));
+            msg.put("playerValidations", new HashMap<>(playerValidations));
 
-        System.out.println("[SERVER] Game ended. Rankings: " + rankingsList);
+            System.out.println("[SERVER] Final msg prepared. Rankings=" + rankingsList.size() + ", Words="
+                    + playerWords.size());
+            broadcast(msg);
+            System.out.println("[SERVER] Final GAME_END broadcast complete.");
+        } catch (Exception e) {
+            System.err.println("[SERVER] CRITICAL ERROR in endGame(): " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
     /**
@@ -239,6 +247,12 @@ public class GameServer {
                     GameMessage playerListMsg = new GameMessage(GameMessage.MessageType.PLAYER_LIST);
                     playerListMsg.put("players", getConnectedPlayers());
                     broadcast(playerListMsg);
+
+                    // Send CONNECT_ACK to the new client with their unique name
+                    GameMessage ackMsg = new GameMessage(GameMessage.MessageType.CONNECT_ACK);
+                    ackMsg.put("assignedName", playerName);
+                    send(ackMsg);
+                    System.out.println("[SERVER] Sent CONNECT_ACK to " + playerName);
                 }
 
                 // Listen for messages
@@ -276,6 +290,10 @@ public class GameServer {
                 case DISCONNECT:
                     close();
                     break;
+                case REQUEST_END_GAME:
+                    System.out.println("[SERVER] End game requested by " + playerName);
+                    endGame();
+                    break;
                 default:
                     System.out.println("[SERVER] Received: " + message);
             }
@@ -286,41 +304,53 @@ public class GameServer {
             String word = message.getString("word");
             String player = message.getPlayerName();
 
-            System.out.println("[SERVER] Validating word: " + word + " for " + category + " by " + player);
+            System.out.println("[SERVER] Initializing async validation for: " + word + " (" + category + ")");
 
-            // Validate word using DeepSeekService
-            ValidationResult result = deepSeekService.validateWord(category, word, currentLetter, gameLanguage);
+            // Run validation in a separate thread to avoid blocking the main message loop
+            // This is CRITICAL so that REQUEST_END_GAME can still be processed if API is
+            // slow.
+            new Thread(() -> {
+                try {
+                    ValidationResult result = deepSeekService.validateWord(category, word, currentLetter, gameLanguage);
 
-            // Record word and update score
-            Map<String, String> words = playerWords.get(player);
-            if (words != null)
-                words.put(category, word);
+                    // Record word and update score
+                    Map<String, String> words = playerWords.get(player);
+                    if (words != null) {
+                        words.put(category, word);
+                        System.out.println("[SERVER] Stored word for " + player + ": " + word + " (" + category + ")");
+                    } else {
+                        System.err.println("[SERVER] ERROR: No word map found for player: " + player);
+                    }
 
-            Map<String, ValidationResult> validations = playerValidations.get(player);
-            if (validations != null)
-                validations.put(category, result);
+                    Map<String, ValidationResult> validations = playerValidations.get(player);
+                    if (validations != null)
+                        validations.put(category, result);
 
-            int currentScore = playerScores.getOrDefault(player, 0);
-            if (result.isValid) {
-                playerScores.put(player, currentScore + result.score);
-            }
+                    int currentScore = playerScores.getOrDefault(player, 0);
+                    if (result.isValid) {
+                        playerScores.put(player, currentScore + result.score);
+                    }
 
-            // Broadcast validation result
-            GameMessage validationMsg = new GameMessage(GameMessage.MessageType.WORD_VALIDATED);
-            validationMsg.setPlayerName(player);
-            validationMsg.put("category", category);
-            validationMsg.put("word", word);
-            validationMsg.put("valid", result.isValid);
-            validationMsg.put("score", result.score);
-            broadcast(validationMsg);
+                    // Broadcast validation result
+                    GameMessage validationMsg = new GameMessage(GameMessage.MessageType.WORD_VALIDATED);
+                    validationMsg.setPlayerName(player);
+                    validationMsg.put("category", category);
+                    validationMsg.put("word", word);
+                    validationMsg.put("valid", result.isValid);
+                    validationMsg.put("score", result.score);
+                    broadcast(validationMsg);
 
-            // Broadcast score update
-            GameMessage scoreMsg = new GameMessage(GameMessage.MessageType.SCORE_UPDATE);
-            scoreMsg.put("scores", new HashMap<>(playerScores));
-            broadcast(scoreMsg);
+                    // Broadcast score update
+                    GameMessage scoreMsg = new GameMessage(GameMessage.MessageType.SCORE_UPDATE);
+                    scoreMsg.put("scores", new HashMap<>(playerScores));
+                    broadcast(scoreMsg);
+                } catch (Exception e) {
+                    System.err.println("[SERVER] Error during async validation: " + e.getMessage());
+                }
+            }).start();
         }
 
-        public void send(GameMessage message) {
+        public synchronized void send(GameMessage message) {
             try {
                 out.writeObject(message);
                 out.reset(); // CRITICAL: Bypass caching for modified objects

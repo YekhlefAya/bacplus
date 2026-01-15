@@ -95,7 +95,7 @@ public class GameClient {
                 System.err.println("[CLIENT] Connection lost: " + e.getMessage());
                 Platform.runLater(() -> {
                     if (callback != null)
-                        callback.onDisconnected("Connexion perdue");
+                        callback.onDisconnected("Connexion perdue : " + e.getMessage());
                 });
             }
         } finally {
@@ -117,6 +117,13 @@ public class GameClient {
                     if (callback != null)
                         callback.onPlayerListUpdate(players);
                 });
+                break;
+            case CONNECT_ACK:
+                String assignedName = message.getString("assignedName");
+                if (assignedName != null) {
+                    System.out.println("[CLIENT] Official name confirmed by server: " + assignedName);
+                    this.playerName = assignedName;
+                }
                 break;
 
             case GAME_START:
@@ -201,9 +208,20 @@ public class GameClient {
     }
 
     /**
+     * Request the server to end the current game
+     */
+    public void requestEndGame() {
+        if (connected) {
+            GameMessage msg = new GameMessage(GameMessage.MessageType.REQUEST_END_GAME, playerName);
+            send(msg);
+            System.out.println("[CLIENT] Termination request sent to server.");
+        }
+    }
+
+    /**
      * Send a message to the server
      */
-    private void send(GameMessage message) {
+    private synchronized void send(GameMessage message) {
         try {
             out.writeObject(message);
             out.reset(); // CRITICAL: Bypass caching

@@ -3,11 +3,11 @@ package com.bacplus;
 import com.bacplus.models.Category;
 import com.bacplus.models.Game;
 import com.bacplus.models.Player;
-import com.bacplus.models.ValidatedWord;
 import com.bacplus.network.GameClient;
 import com.bacplus.network.GameServer;
 import com.bacplus.services.DeepSeekService;
 import com.bacplus.services.DeepSeekService.ValidationResult;
+import com.bacplus.services.GameEngine;
 import com.bacplus.utils.HibernateUtil;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
@@ -27,6 +27,12 @@ import org.hibernate.Session;
 import org.hibernate.Transaction;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Collections;
+import java.util.stream.Collectors;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.awt.Desktop;
+import java.net.URI;
 
 import java.net.URL;
 import java.util.*;
@@ -128,6 +134,8 @@ public class MainController implements Initializable {
     @FXML
     private VBox resultsListBox;
     @FXML
+    private VBox rankingContainer;
+    @FXML
     private Button btnResultsBack;
 
     // CATEGORIES MANAGEMENT
@@ -136,7 +144,7 @@ public class MainController implements Initializable {
     @FXML
     private ProgressBar activeProgressBar;
     @FXML
-    private HBox previewCategoriesBox;
+    private FlowPane previewCategoriesBox;
     @FXML
     private ListView<HBox> categoriesList;
     @FXML
@@ -161,10 +169,6 @@ public class MainController implements Initializable {
     // SETTINGS / CONFIG
     @FXML
     private TextField pseudoField;
-    @FXML
-    private TextField apiKeyField;
-    @FXML
-    private Label lblSettingsTitle;
     @FXML
     private RadioButton themeLight, themeDark;
     @FXML
@@ -263,13 +267,19 @@ public class MainController implements Initializable {
             List<Player> players = session.createQuery("FROM Player", Player.class).list();
             if (players.isEmpty()) {
                 Transaction tx = session.beginTransaction();
-                Player p = new Player("Player1");
+                Player p = new Player("Joueur 1");
                 p.setPoints(50); // Welcome bonus
                 session.save(p);
                 tx.commit();
                 this.currentPlayer = p;
             } else {
                 this.currentPlayer = players.get(0);
+            }
+
+            // Link API Key to Service
+            if (this.currentPlayer != null && this.currentPlayer.getDeepSeekKey() != null) {
+                DeepSeekService.setApiKey(this.currentPlayer.getDeepSeekKey());
+                System.out.println("[CONFIG] API Key loaded from player profile.");
             }
         }
     }
@@ -315,6 +325,7 @@ public class MainController implements Initializable {
         settingsPane.setVisible(false);
 
         pane.setVisible(true);
+        pane.toFront();
     }
 
     @FXML
@@ -324,9 +335,29 @@ public class MainController implements Initializable {
 
     @FXML
     private void showSetup() {
-        loadCategories();
-        updateCategoriesSelectionUI();
-        showPane(setupPane);
+        System.out.println("[DEBUG] Entering showSetup()...");
+        try {
+            System.out.println("[DEBUG] Loading categories...");
+            loadCategories();
+            System.out.println("[DEBUG] Updating selection UI...");
+            updateCategoriesSelectionUI();
+            System.out.println("[DEBUG] Showing setup pane...");
+            showPane(setupPane);
+            System.out.println("[DEBUG] showSetup() completed.");
+        } catch (Exception e) {
+            System.err.println("[ERROR] Exception in showSetup: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    @FXML
+    private void generateNewLetter() {
+        // Reuse GameEngine to follow rules (avoiding hard letters)
+        GameEngine engine = new GameEngine();
+        currentLetter = String.valueOf(engine.generateRandomLetter());
+        if (gameLetterLabelSetup != null) {
+            gameLetterLabelSetup.setText(currentLetter);
+        }
     }
 
     @FXML
@@ -427,7 +458,7 @@ public class MainController implements Initializable {
 
         if ("MULTI".equals(mode) && g.getPlayerRank() > 0) {
             Label rankLbl = new Label("Rang: #" + g.getPlayerRank() + "/" + g.getTotalPlayers());
-            rankLbl.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+            rankLbl.setStyle("-fx-font-size: 11px; -fx-text-fill: -text-muted;");
             details.getChildren().add(rankLbl);
         }
 
@@ -437,6 +468,9 @@ public class MainController implements Initializable {
 
     @FXML
     private void showSettings() {
+        if (currentPlayer != null) {
+            pseudoField.setText(currentPlayer.getUsername());
+        }
         showPane(settingsPane);
     }
 
@@ -482,9 +516,9 @@ public class MainController implements Initializable {
     private HBox createSectionHeader(String title) {
         HBox hbox = new HBox();
         hbox.setPadding(new Insets(10, 0, 5, 0));
-        hbox.setStyle("-fx-border-color: transparent transparent #ddd transparent;");
+        hbox.setStyle("-fx-border-color: transparent transparent -secondary-color transparent;");
         Label lbl = new Label(title);
-        lbl.setStyle("-fx-font-weight: bold; -fx-text-fill: #999; -fx-font-size: 12px;");
+        lbl.setStyle("-fx-font-weight: bold; -fx-text-fill: -text-muted; -fx-font-size: 12px;");
         hbox.getChildren().add(lbl);
         return hbox;
     }
@@ -493,7 +527,10 @@ public class MainController implements Initializable {
         HBox row = new HBox(20);
         row.setAlignment(Pos.CENTER_LEFT);
         row.setPadding(new Insets(10));
-        row.setStyle("-fx-background-color: " + (c.isSystem() ? "#F9F9F9" : "WHITE") + "; -fx-background-radius: 5px;");
+        row.setStyle("-fx-background-color: -surface-color; -fx-background-radius: 5px;");
+        if (c.isSystem()) {
+            row.setStyle(row.getStyle() + " -fx-opacity: 0.9;");
+        }
 
         // CheckBox (Status for toggle) - except for Mandatory
         CheckBox cb = new CheckBox();
@@ -522,7 +559,7 @@ public class MainController implements Initializable {
         Label typeBadge = new Label(c.isSystem() ? "★ Défaut" : "✨ Perso");
         typeBadge.setPrefWidth(120);
         typeBadge.setStyle(
-                "-fx-text-fill: #666; -fx-background-color: #eee; -fx-padding: 2 6; -fx-background-radius: 4;");
+                "-fx-text-fill: -text-muted; -fx-background-color: -secondary-color; -fx-padding: 2 6; -fx-background-radius: 4;");
 
         // Actions
         HBox actions = new HBox(10);
@@ -651,20 +688,20 @@ public class MainController implements Initializable {
 
     private void refreshGamePreview(long activeCount) {
         previewCategoriesBox.getChildren().clear();
-        // Just show first 4 active categories
+        // Show up to 8 active categories
         allCategoriesEntry.stream()
                 .filter(Category::isActive)
-                .limit(4)
+                .limit(8)
                 .forEach(c -> {
                     Label lbl = new Label(c.getName().toUpperCase());
                     lbl.setStyle(
-                            "-fx-background-color: #E0E0E0; -fx-padding: 5 10; -fx-background-radius: 15; -fx-font-weight: bold;");
+                            "-fx-background-color: -secondary-color; -fx-padding: 5 10; -fx-background-radius: 15; -fx-font-weight: bold; -fx-text-fill: -text-color; -fx-font-size: 10px;");
                     previewCategoriesBox.getChildren().add(lbl);
                 });
 
         if (activeCount < 3) {
             Label warn = new Label("⚠️ Min 3 cat.");
-            warn.setStyle("-fx-text-fill: red;");
+            warn.setStyle("-fx-text-fill: -error-color;");
             previewCategoriesBox.getChildren().add(warn);
         }
     }
@@ -673,9 +710,11 @@ public class MainController implements Initializable {
 
     @FXML
     private void startGame() {
+        System.out.println("[DEBUG] startGame() initiated.");
         // Reload fresh from DB
         loadCategories();
         List<Category> activeCats = allCategoriesEntry.stream().filter(Category::isActive).collect(Collectors.toList());
+        System.out.println("[DEBUG] Active categories count: " + activeCats.size());
 
         if (activeCats.size() < 3) {
             showAlert("Erreur", "Moins de 3 catégories actives ! Configurez les catégories.");
@@ -683,26 +722,29 @@ public class MainController implements Initializable {
         }
 
         System.out.println("[DEBUG] startGame() called. isMultiplayer=" + isMultiplayer + ", isHost=" + isHost
-                + ", gameServer=" + (gameServer != null));
+                + ", gameServer=" + (gameServer != null) + ", gameClient=" + (gameClient != null));
+
+        // Ensure isMultiplayer is synced with UI choice
+        this.isMultiplayer = radioMulti.isSelected();
+
         if (isMultiplayer && isHost && gameServer != null) {
-            // Multiplayer Host logic: Pick letter and categories, then tell server to start
-            char c = (char) ('A' + new Random().nextInt(26));
-            String letter = String.valueOf(c);
+            // Multiplayer Host logic: Generate fresh random letter
+            generateNewLetter();
+            String letter = currentLetter;
             String lang = "fr";
             List<String> catNames = activeCats.stream()
                     .map(Category::getName)
                     .collect(Collectors.toList());
 
+            System.out.println("[HOST] Broadcasting GAME_START to all (including self)...");
             gameServer.startGame(letter, lang, catNames, cbEnableTimer.isSelected());
-            System.out.println(
-                    "[HOST] Sent startGame signal with letter " + letter + " and " + catNames.size() + " categories.");
-            // We don't setup UI here, we wait for the server broadcast to our local client
             return;
         }
 
-        // Single Player logic
-        char c = (char) ('A' + new Random().nextInt(26));
-        currentLetter = String.valueOf(c);
+        System.out.println("[DEBUG] Single Player logic initiated.");
+        // Generate fresh random letter
+        generateNewLetter();
+        System.out.println("[DEBUG] Using letter: " + currentLetter);
         gameLetterLabel.setText(currentLetter);
         this.gameLanguage = "fr";
 
@@ -742,10 +784,12 @@ public class MainController implements Initializable {
             timeline.play();
         }
 
+        System.out.println("[DEBUG] showPane(gamePane) called.");
         showPane(gamePane);
     }
 
     private void buildGameGrid(List<Category> categories) {
+        System.out.println("[DEBUG] buildGameGrid() started for " + categories.size() + " categories.");
         gameGrid.getChildren().clear();
         gameFields.clear();
         gameGrid.getRowConstraints().clear();
@@ -771,12 +815,13 @@ public class MainController implements Initializable {
             VBox box = new VBox(5);
 
             Label lbl = new Label(cat.toUpperCase());
-            lbl.setStyle("-fx-font-weight: bold; -fx-text-fill: #333; -fx-font-size: 14px;");
+            lbl.setStyle("-fx-font-weight: bold; -fx-text-fill: -text-color; -fx-font-size: 14px;");
 
             TextField tf = new TextField();
             tf.setPromptText("Votre réponse...");
-            tf.getStyleClass().add("game-field");
-            tf.setStyle("-fx-padding: 10; -fx-background-radius: 8; -fx-border-color: #ccc; -fx-border-radius: 8;");
+            tf.getStyleClass().add("game-input");
+            tf.setStyle(
+                    "-fx-padding: 10; -fx-background-radius: 8; -fx-border-color: -secondary-color; -fx-background-color: -surface-color; -fx-text-fill: -text-color; -fx-border-radius: 8;");
 
             setupValidation(tf, cat);
 
@@ -792,9 +837,11 @@ public class MainController implements Initializable {
 
             gameGrid.add(box, c, r);
             gameFields.put(cat, tf);
+            System.out.println("[DEBUG] buildGameGrid: Mapped category '" + cat + "' to field.");
 
             index++;
         }
+        System.out.println("[DEBUG] buildGameGrid finished. gameFields size: " + gameFields.size());
     }
 
     // --- VALIDATION & UTILS (Keep existing) ---
@@ -841,7 +888,8 @@ public class MainController implements Initializable {
         }
 
         // 2. Pending State (Grey/Loading)
-        tf.setStyle("-fx-border-color: #FFC107; -fx-background-color: #FFF8E1;");
+        tf.getStyleClass().add("pending");
+        tf.setStyle(""); // Clear inline styles to let CSS take over
 
         if (isMultiplayer && gameClient != null && gameClient.isConnected()) {
             gameClient.submitWord(category, clean);
@@ -853,9 +901,19 @@ public class MainController implements Initializable {
     private void validateWithApi(TextField tf, String category, String word) {
         System.out.println(
                 "[DEBUG] validateWithApi - word: " + word + ", category: " + category + ", language: " + gameLanguage);
+        final String wordToValidate = word; // Capture current word
         new Thread(() -> {
-            ValidationResult result = deepSeekService.validateWord(category, word, currentLetter, gameLanguage);
+            ValidationResult result = deepSeekService.validateWord(category, wordToValidate, currentLetter,
+                    gameLanguage);
             Platform.runLater(() -> {
+                // RACE CONDITION FIX: Only update if the text hasn't changed while we were
+                // validating
+                if (!tf.getText().trim().equals(wordToValidate)) {
+                    System.out.println("[DEBUG] Ignoring validation result for '" + wordToValidate
+                            + "' because field has changed to '" + tf.getText() + "'");
+                    return;
+                }
+
                 if (result.isValid) {
                     setFieldValid(tf);
                     currentWordScores.put(category, result.score);
@@ -885,22 +943,20 @@ public class MainController implements Initializable {
     }
 
     private void setFieldValid(TextField tf) {
-        tf.getStyleClass().removeAll("field-invalid", "field-neutral");
-        if (!tf.getStyleClass().contains("field-valid"))
-            tf.getStyleClass().add("field-valid");
-        tf.setStyle("-fx-border-color: #4CAF50; -fx-background-color: #E8F5E9;");
+        tf.getStyleClass().removeAll("invalid", "field-neutral", "pending", "valid");
+        tf.getStyleClass().add("valid");
+        tf.setStyle("");
     }
 
     private void setFieldInvalid(TextField tf) {
-        tf.getStyleClass().removeAll("field-valid", "field-neutral");
-        if (!tf.getStyleClass().contains("field-invalid"))
-            tf.getStyleClass().add("field-invalid");
-        tf.setStyle("-fx-border-color: #F44336; -fx-background-color: #FFEBEE;");
+        tf.getStyleClass().removeAll("valid", "field-neutral", "pending", "invalid");
+        tf.getStyleClass().add("invalid");
+        tf.setStyle("");
     }
 
     private void resetFieldStyle(TextField tf) {
-        tf.getStyleClass().removeAll("field-valid", "field-invalid");
-        tf.setStyle("");
+        tf.getStyleClass().removeAll("valid", "invalid", "pending");
+        tf.setStyle("-fx-border-color: -secondary-color;"); // Restore default
     }
 
     @FXML
@@ -909,45 +965,99 @@ public class MainController implements Initializable {
             timeline.stop();
 
         if (isMultiplayer) {
-            if (isHost && gameServer != null) {
-                // If we are host, we tell the server to end for everyone
-                gameServer.endGame();
+            if (gameClient != null && gameClient.isConnected()) {
+                System.out.println("[DEBUG] finishGame: Requesting end game via client...");
+                gameClient.requestEndGame();
+            } else {
+                System.out.println("[DEBUG] finishGame: Client null or disconnected.");
             }
-            // If client, we just wait for the GAME_END broadcast which will trigger
-            // showMultiplayerResults
             return;
         }
 
-        // Single Player logic below
-        recalculateTotalScore(); // Final sync
+        System.out.println("[DEBUG] finishGame: Finishing solo game...");
 
-        finalLetterLabel.setText("Lettre de la partie : " + currentLetter);
-        finalScoreLabel.setText(score + " pts");
-        resultsListBox.getChildren().clear();
+        try {
 
-        gameFields.forEach((cat, tf) -> {
-            HBox row = new HBox(10);
-            row.setAlignment(Pos.CENTER_LEFT);
-            row.setPadding(new Insets(5));
-            row.getStyleClass().add("card");
+            recalculateTotalScore();
+            finalLetterLabel.setText(currentLanguage.equals("en") ? "Game Letter: " + currentLetter
+                    : "Lettre de la partie : " + currentLetter);
+            finalScoreLabel.setText(""); // Hide top score, moved to ranking
+            resultsListBox.getChildren().clear();
+            rankingContainer.getChildren().clear();
 
-            int wordScore = currentWordScores.getOrDefault(cat, 0);
-            boolean isValid = wordScore > 0;
+            // --- SOLO RANKING DISPLAY ---
+            HBox rankingRow = new HBox(15);
+            rankingRow.getStyleClass().add("ranking-row");
+            rankingRow.getStyleClass().add("current-player");
 
-            Label icon = new Label(isValid ? "✅" : "❌");
-            Label catLbl = new Label(cat.toUpperCase());
-            catLbl.setPrefWidth(120);
-            catLbl.setStyle("-fx-font-weight: bold;");
+            Label rankBadge = new Label("1");
+            rankBadge.getStyleClass().addAll("rank-badge", "rank-1");
 
-            Label wordLbl = new Label(tf.getText().isEmpty() ? "-" : tf.getText());
-            wordLbl.setPrefWidth(150);
+            Label nameLbl = new Label(currentPlayer != null ? currentPlayer.getUsername() + " (VOUS)" : "Moi");
+            nameLbl.getStyleClass().add("player-name-large");
+            HBox.setHgrow(nameLbl, Priority.ALWAYS);
 
-            Label ptsLbl = new Label("+" + wordScore);
-            ptsLbl.setStyle(isValid ? "-fx-text-fill: green;" : "-fx-text-fill: red;");
+            Label medalLbl = new Label("🏆");
+            medalLbl.setStyle("-fx-font-size: 18px;");
 
-            row.getChildren().addAll(icon, catLbl, wordLbl, ptsLbl);
-            resultsListBox.getChildren().add(row);
-        });
+            Label scoreValueLbl = new Label(score + " pts");
+            scoreValueLbl.getStyleClass().add("player-score-large");
+
+            rankingRow.getChildren().addAll(rankBadge, nameLbl, medalLbl, scoreValueLbl);
+            rankingContainer.getChildren().add(rankingRow);
+
+            gameFields.forEach((cat, tf) -> {
+                VBox card = new VBox(5);
+                card.getStyleClass().add("card");
+                card.setPadding(new Insets(10));
+
+                HBox row = new HBox(10);
+                row.setAlignment(Pos.CENTER_LEFT);
+
+                int wordScore = currentWordScores.getOrDefault(cat, 0);
+                boolean isValid = wordScore > 0;
+
+                Label icon = new Label(isValid ? "✅" : "❌");
+                Label catLbl = new Label(cat.toUpperCase());
+                catLbl.setPrefWidth(120);
+                catLbl.setStyle("-fx-font-weight: bold;");
+
+                String playerWord = tf.getText().trim();
+                Label wordLbl = new Label(playerWord.isEmpty() ? "-" : playerWord);
+                wordLbl.setPrefWidth(150);
+
+                Label ptsLbl = new Label("+" + wordScore);
+                ptsLbl.setStyle(
+                        isValid ? "-fx-text-fill: -success-color; -fx-font-weight: bold;"
+                                : "-fx-text-fill: -error-color;");
+
+                row.getChildren().addAll(icon, catLbl, wordLbl, ptsLbl);
+                card.getChildren().add(row);
+
+                // Revelation: Suggest a word if the player failed or to show perfection
+                if (!isValid) {
+                    Label revealLabel = new Label(
+                            currentLanguage.equals("en") ? "💡 Suggestion: ..." : "💡 Suggestion : ...");
+                    revealLabel.setStyle("-fx-text-fill: -text-muted; -fx-font-style: italic; -fx-font-size: 11px;");
+                    card.getChildren().add(revealLabel);
+
+                    // Fetch suggestion asynchronously
+                    new Thread(() -> {
+                        String suggestion = deepSeekService.suggestWord(cat, currentLetter, currentLanguage);
+                        Platform.runLater(() -> revealLabel.setText(
+                                (currentLanguage.equals("en") ? "💡 Suggestion: " : "💡 Suggestion : ") + suggestion));
+                    }).start();
+                }
+
+                resultsListBox.getChildren().add(card);
+                System.out.println("[DEBUG] Added result card for category: " + cat);
+            });
+            System.out.println("[DEBUG] Total children in resultsListBox: " + resultsListBox.getChildren().size());
+
+        } catch (Exception e) {
+            System.err.println("[ERROR] finishGame failed: " + e.getMessage());
+            e.printStackTrace();
+        }
 
         showPane(resultsPane);
         saveGameResult();
@@ -958,44 +1068,48 @@ public class MainController implements Initializable {
     }
 
     private void saveGameResult(int playerRank, int totalPlayers) {
-        try (Session session = HibernateUtil.getSessionFactory().openSession()) {
-            Transaction tx = session.beginTransaction();
+        // PERFORMANCE FIX: Run DB operations in background to avoid freezing UI
+        new Thread(() -> {
+            try (Session session = HibernateUtil.getSessionFactory().openSession()) {
+                Transaction tx = session.beginTransaction();
 
-            // 1. Save Game
-            Game game = new Game();
-            game.setDate(LocalDateTime.now());
-            game.setDurationSeconds(120 - timeLeft);
-            game.setLetter(currentLetter);
-            game.setScore(score);
-            game.setMode(isMultiplayer ? "MULTI" : "SOLO");
-            game.setPlayerRank(playerRank);
-            game.setTotalPlayers(totalPlayers);
-            session.save(game);
+                // 1. Save Game
+                Game game = new Game();
+                game.setDate(LocalDateTime.now());
+                game.setDurationSeconds(120 - timeLeft);
+                game.setLetter(currentLetter);
+                game.setScore(score);
+                game.setMode(isMultiplayer ? "MULTI" : "SOLO");
+                game.setPlayerRank(playerRank);
+                game.setTotalPlayers(totalPlayers);
+                session.save(game);
 
-            // 2. Update Player Points
-            if (currentPlayer != null) {
-                int earned = score;
-                currentPlayer.setPoints(currentPlayer.getPoints() + earned);
-                session.update(currentPlayer);
+                // 2. Update Player Points
+                if (currentPlayer != null) {
+                    int earned = score;
+                    currentPlayer.setPoints(currentPlayer.getPoints() + earned);
+                    session.update(currentPlayer);
 
-                Platform.runLater(() -> {
-                    updatePlayerPointsUI();
-                    showToast("Points gagnés: " + earned);
-                });
+                    Platform.runLater(() -> {
+                        updatePlayerPointsUI();
+                        showToast("Points gagnés: " + earned);
+                    });
+                }
+
+                tx.commit();
+                System.out.println("Partie sauvegardée : " + game.getMode() + " - Score: " + score);
+            } catch (Exception e) {
+                System.err.println("Erreur sauvegarde : " + e.getMessage());
+                e.printStackTrace();
             }
-
-            tx.commit();
-            System.out.println("Partie sauvegardée : " + game.getMode() + " - Score: " + score);
-        } catch (Exception e) {
-            System.err.println("Erreur sauvegarde : " + e.getMessage());
-            e.printStackTrace();
-        }
+        }).start();
     }
 
     @FXML
     private void quitGame() {
         if (timeline != null)
             timeline.stop();
+        cleanupMultiplayer(); // Ensure state is reset
         showHome();
     }
 
@@ -1003,9 +1117,9 @@ public class MainController implements Initializable {
     private void useHint() {
         // Same hint logic
         ContextMenu menu = new ContextMenu();
-        MenuItem itemBonus = new MenuItem("Temps Bonus (+30s) (3 pts)");
+        MenuItem itemBonus = new MenuItem("Temps Bonus (+30s) (20 pts)");
         itemBonus.setOnAction(e -> applyBonusTime());
-        MenuItem itemReveal = new MenuItem("Révélation (5 pts)");
+        MenuItem itemReveal = new MenuItem("Révélation (30 pts)");
         itemReveal.setOnAction(e -> applyRevealWord());
         menu.getItems().addAll(itemBonus, itemReveal);
         javafx.geometry.Point2D p = btnHint.localToScreen(0, 0);
@@ -1016,7 +1130,7 @@ public class MainController implements Initializable {
         if (currentPlayer == null)
             return;
 
-        int cost = 3;
+        int cost = 20;
         if (currentPlayer.getPoints() >= cost) {
             updatePlayerPoints(-cost);
             timeLeft += 30;
@@ -1043,28 +1157,46 @@ public class MainController implements Initializable {
         if (currentPlayer == null)
             return;
 
-        int cost = 3; // UPDATED COST as requested
+        int cost = 30; // UPDATED COST as requested
         if (currentPlayer.getPoints() >= cost) {
-            Optional<Map.Entry<String, TextField>> emptyEntry = gameFields.entrySet().stream()
-                    .filter(e -> e.getValue().getText().isEmpty()
-                            || !e.getValue().getStyleClass().contains("field-valid"))
-                    .findFirst();
+            // UPDATED LOGIC: Collect all candidates first
+            List<Map.Entry<String, TextField>> candidates = gameFields.entrySet().stream()
+                    .filter(e -> {
+                        String txt = e.getValue().getText().trim();
+                        // Filter: Empty OR (Invalid AND NOT valid style)
+                        return txt.isEmpty() || (!e.getValue().getStyleClass().contains("field-valid"));
+                    })
+                    .collect(Collectors.toList());
 
-            if (emptyEntry.isPresent()) {
-                String cat = emptyEntry.get().getKey();
-                TextField tf = emptyEntry.get().getValue();
+            if (!candidates.isEmpty()) {
+                Collections.shuffle(candidates);
+                Map.Entry<String, TextField> selectedEntry = candidates.get(0);
+
+                String cat = selectedEntry.getKey();
+                TextField tf = selectedEntry.getValue();
+                String currentValue = tf.getText().trim(); // Capture current value to avoid suggesting it again if
+                                                           // possible
 
                 showToast("Recherche d'un mot... (-" + cost + " pts)");
                 updatePlayerPoints(-cost);
 
-                System.out.println("[DEBUG] applyRevealWord - category: " + cat + ", language: " + gameLanguage);
+                System.out.println("[DEBUG] applyRevealWord - category: " + cat + ", language: " + gameLanguage
+                        + ", existing: " + currentValue);
                 new Thread(() -> {
+                    // Pass current value as exclusions/context if we updated suggestWord,
+                    // but for now relying on expanded fallback list and API valid checks.
                     String suggestion = deepSeekService.suggestWord(cat, currentLetter, gameLanguage);
                     Platform.runLater(() -> {
                         if (suggestion != null && !suggestion.equalsIgnoreCase("Erreur")) {
-                            tf.setText(suggestion);
-                            validateWithApi(tf, cat, suggestion);
-                            showToast("Suggestion: " + suggestion);
+                            // Check if suggestion is same as current (loop prevention)
+                            if (suggestion.equalsIgnoreCase(currentValue)) {
+                                showToast("Pas d'autre suggestion trouvée !");
+                                updatePlayerPoints(cost); // Refund
+                            } else {
+                                tf.setText(suggestion);
+                                validateWithApi(tf, cat, suggestion);
+                                showToast("Suggestion: " + suggestion);
+                            }
                         } else {
                             showToast("Impossible de trouver un mot !");
                             updatePlayerPoints(cost); // Refund
@@ -1082,7 +1214,7 @@ public class MainController implements Initializable {
     private void showToast(String msg) {
         Label toast = new Label(msg);
         toast.setStyle(
-                "-fx-background-color: #333; -fx-text-fill: white; -fx-padding: 10px; -fx-background-radius: 5px;");
+                "-fx-background-color: -secondary-color; -fx-text-fill: -text-color; -fx-padding: 10px; -fx-background-radius: 5px; -fx-border-color: -primary-color; -fx-border-radius: 5px;");
         rootPane.getChildren().add(toast);
         StackPane.setAlignment(toast, Pos.BOTTOM_CENTER);
         StackPane.setMargin(toast, new Insets(0, 0, 100, 0));
@@ -1137,6 +1269,14 @@ public class MainController implements Initializable {
             return;
         }
 
+        // Check if port 8888 is already bound
+        if (!isPortAvailable(8888)) {
+            showToast("Port 8888 déjà utilisé ! Une autre instance est peut-être déjà hôte.");
+            connectionStatusLabel.setText("Port 8888 bloqué");
+            connectionStatusLabel.setStyle("-fx-text-fill: red;");
+            return;
+        }
+
         // Reset state
         isHost = false;
         isMultiplayer = false;
@@ -1169,6 +1309,7 @@ public class MainController implements Initializable {
 
             @Override
             public void onServerStarted() {
+                System.out.println("[SERVER] onServerStarted() - Setting isHost=true");
                 Platform.runLater(() -> {
                     connectionStatusLabel.setText("Serveur démarré sur port 8888");
                     connectionStatusLabel.setStyle("-fx-text-fill: green;");
@@ -1177,6 +1318,7 @@ public class MainController implements Initializable {
 
                     // Automatically join as a client to unify logic
                     serverIpField.setText("127.0.0.1");
+                    System.out.println("[SERVER] Host joining own server...");
                     joinGame();
 
                     // Capture and broadcast current host settings
@@ -1191,10 +1333,8 @@ public class MainController implements Initializable {
 
     @FXML
     private void joinGame() {
-        if (gameClient != null && gameClient.isConnected()) {
-            showToast("Déjà connecté au serveur");
-            return;
-        }
+        String serverIp = serverIpField.getText().trim();
+        System.out.println("[DEBUG] joinGame() called. IP=" + serverIp + ", isHost=" + isHost);
 
         // IMPORTANT: Only reset isHost if we are NOT actually hosting locally
         boolean isLocalHost = isHost && gameServer != null;
@@ -1206,7 +1346,6 @@ public class MainController implements Initializable {
         // Disable start button for joiners
         btnStart.setDisable(!isHost);
 
-        String serverIp = serverIpField.getText().trim();
         if (serverIp.isEmpty()) {
             showToast("Veuillez entrer l'IP du serveur");
             return;
@@ -1218,14 +1357,19 @@ public class MainController implements Initializable {
         gameClient = new GameClient(playerName, new GameClient.ClientCallback() {
             @Override
             public void onConnected() {
+                System.out.println("[CLIENT] onConnected() - isHost currently=" + isHost);
                 Platform.runLater(() -> {
                     connectionStatusLabel.setText("Connecté au serveur");
                     connectionStatusLabel.setStyle("-fx-text-fill: green;");
                     isMultiplayer = true;
-                    // Important: only set isHost to false if it's not already true
+                    // Ensure isHost remains true if we are the server
+                    if (gameServer != null) {
+                        isHost = true;
+                    }
                     if (!isHost) {
-                        isHost = false;
                         btnStart.setDisable(true);
+                    } else {
+                        btnStart.setDisable(false);
                     }
                 });
             }
@@ -1271,7 +1415,7 @@ public class MainController implements Initializable {
             @Override
             public void onGameStart(String letter, String language, List<String> categories, boolean timerEnabled) {
                 System.out.println(
-                        "[CLIENT] CRITICAL: Signal GAME_START reçu. Letter=" + letter + ", Timer=" + timerEnabled);
+                        "[CLIENT] GAME_START received. isHost=" + isHost + ", letter=" + letter);
                 Platform.runLater(() -> {
                     try {
                         currentLetter = letter;
@@ -1279,6 +1423,10 @@ public class MainController implements Initializable {
                         gameLetterLabel.setText(letter);
 
                         isTimerEnabled = timerEnabled;
+                        timerLabel.setVisible(timerEnabled);
+                        timerLabel.setManaged(timerEnabled);
+                        progressBar.setVisible(timerEnabled);
+                        progressBar.setManaged(timerEnabled);
 
                         // Sync settings UI for non-host
                         if (!isHost) {
@@ -1327,8 +1475,9 @@ public class MainController implements Initializable {
             @Override
             public void onWordValidated(String player, String category, String word, boolean valid, int score) {
                 Platform.runLater(() -> {
-                    // Update UI if it's our word
-                    if (player.equals(playerName)) {
+                    // Update UI if it's our word (using official server name)
+                    String ourName = (gameClient != null) ? gameClient.getPlayerName() : "Player";
+                    if (player.equals(ourName)) {
                         TextField tf = gameFields.get(category);
                         if (tf != null) {
                             if (valid) {
@@ -1363,6 +1512,14 @@ public class MainController implements Initializable {
             public void onGameEnd(Map<String, Integer> rankings, Map<String, Map<String, String>> playerWords,
                     Map<String, Map<String, ValidationResult>> playerValidations) {
                 Platform.runLater(() -> {
+                    System.out.println("[CLIENT] onGameEnd received. Rankings=" + rankings.size() + ", Words="
+                            + (playerWords != null ? playerWords.size() : "null"));
+                    if (playerWords != null) {
+                        playerWords.forEach((user, map) -> {
+                            System.out.println("   -> Words for " + user + ": " + map.size() + " entries");
+                        });
+                    }
+
                     if (timeline != null)
                         timeline.stop();
                     showMultiplayerResults(rankings, playerWords, playerValidations);
@@ -1390,32 +1547,27 @@ public class MainController implements Initializable {
     }
 
     @FXML
-    private void testApi() {
-        String key = apiKeyField.getText();
-        if (key == null || key.trim().isEmpty()) {
-            showAlert("Erreur", "Veuillez entrer une clé API.");
-            return;
+    private boolean isPortAvailable(int port) {
+        try (java.net.ServerSocket ss = new java.net.ServerSocket(port)) {
+            return true;
+        } catch (java.io.IOException e) {
+            return false;
         }
-
-        DeepSeekService.setApiKey(key);
-        new Thread(() -> {
-            String result = deepSeekService.suggestWord("fruit", "A", "fr");
-            Platform.runLater(() -> {
-                if (result != null && !result.equals("Erreur")) {
-                    showAlert("Succès", "API fonctionnelle ! Suggestion reçue: " + result);
-                } else {
-                    showAlert("Erreur", "Échec du test API. Vérifiez votre clé.");
-                }
-            });
-        }).start();
     }
 
     @FXML
     private void saveSettings() {
-        // Apply API Key
-        String key = apiKeyField.getText();
-        if (key != null && !key.trim().isEmpty()) {
-            DeepSeekService.setApiKey(key);
+        // Save Pseudo
+        String newPseudo = pseudoField.getText().trim();
+        if (!newPseudo.isEmpty() && currentPlayer != null) {
+            currentPlayer.setUsername(newPseudo);
+            try (Session session = HibernateUtil.getSessionFactory().openSession()) {
+                Transaction tx = session.beginTransaction();
+                session.update(currentPlayer);
+                tx.commit();
+            } catch (Exception e) {
+                System.err.println("Erreur sauvegarde pseudo: " + e.getMessage());
+            }
         }
 
         // Apply Language (Immediate)
@@ -1483,7 +1635,6 @@ public class MainController implements Initializable {
         btnStart.setText(bundle.getString("btn.start"));
 
         // Settings
-        lblSettingsTitle.setText(bundle.getString("settings.title"));
         btnSettingsBack.setText(bundle.getString("btn.back"));
         btnSave.setText(bundle.getString("btn.save"));
 
@@ -1504,27 +1655,79 @@ public class MainController implements Initializable {
         List<Map.Entry<String, Integer>> sortedRankings = new ArrayList<>(rankings.entrySet());
         sortedRankings.sort((a, b) -> b.getValue().compareTo(a.getValue()));
 
+        String ourName = gameClient != null ? gameClient.getPlayerName() : "Player";
         finalLetterLabel.setText("Lettre de la partie : " + currentLetter);
-        if (!sortedRankings.isEmpty()) {
-            finalScoreLabel.setText(sortedRankings.get(0).getValue() + " pts");
-        }
+
+        // FIX: Display OUR score in big, not the winner's
+        int ourScoreValue = rankings.getOrDefault(ourName, 0);
+        finalScoreLabel.setText(""); // Hide top score, rely on rankings
 
         resultsListBox.getChildren().clear();
+        rankingContainer.getChildren().clear();
 
-        // --- HEADER ROW (Categories) ---
+        // --- MODERN DYNAMIC RANKING ---
+        for (int i = 0; i < sortedRankings.size(); i++) {
+            Map.Entry<String, Integer> entry = sortedRankings.get(i);
+            int rank = i + 1;
+
+            HBox row = new HBox(15);
+            row.getStyleClass().add("ranking-row");
+            if (entry.getKey().equals(ourName)) {
+                row.getStyleClass().add("current-player");
+            }
+
+            // Rank Badge
+            Label rankBadge = new Label(String.valueOf(rank));
+            rankBadge.getStyleClass().add("rank-badge");
+            if (rank == 1)
+                rankBadge.getStyleClass().add("rank-1");
+            else if (rank == 2)
+                rankBadge.getStyleClass().add("rank-2");
+            else if (rank == 3)
+                rankBadge.getStyleClass().add("rank-3");
+            else
+                rankBadge.getStyleClass().add("rank-other");
+
+            // Player Name & Medal
+            String nameText = entry.getKey();
+            if (entry.getKey().equals(ourName))
+                nameText += " (VOUS)";
+            Label nameLbl = new Label(nameText);
+            nameLbl.getStyleClass().add("player-name-large");
+            HBox.setHgrow(nameLbl, Priority.ALWAYS);
+
+            Label medalLbl = new Label(rank == 1 ? "🏆" : (rank == 2 ? "🥈" : (rank == 3 ? "🥉" : "")));
+            medalLbl.setStyle("-fx-font-size: 18px;");
+
+            // Score
+            Label scoreValueLbl = new Label(entry.getValue() + " pts");
+            scoreValueLbl.getStyleClass().add("player-score-large");
+
+            row.getChildren().addAll(rankBadge, nameLbl, medalLbl, scoreValueLbl);
+            rankingContainer.getChildren().add(row);
+        }
+
+        // --- DETAILED TABLE HEADER ---
         HBox header = new HBox(10);
-        header.setStyle("-fx-background-color: #f4f4f4; -fx-padding: 10; -fx-background-radius: 5;");
+        header.setStyle("-fx-background-color: -secondary-color; -fx-padding: 10; -fx-background-radius: 5;");
         Label catTitle = new Label("CATEGORIE");
         catTitle.setPrefWidth(120);
         catTitle.setStyle("-fx-font-weight: bold;");
         header.getChildren().add(catTitle);
 
         for (String player : rankings.keySet()) {
-            Label pLabel = new Label(player.toUpperCase());
+            Label pLabel = new Label(player.substring(0, Math.min(player.length(), 10)).toUpperCase());
             pLabel.setPrefWidth(150);
             pLabel.setStyle("-fx-font-weight: bold; -fx-alignment: center;");
             header.getChildren().add(pLabel);
         }
+
+        // AI Header
+        Label aiHeader = new Label("SUGGESTION IA");
+        aiHeader.setPrefWidth(150);
+        aiHeader.setStyle("-fx-font-weight: bold; -fx-alignment: center;");
+        header.getChildren().add(aiHeader);
+
         resultsListBox.getChildren().add(header);
 
         // --- DATA ROWS (One per category) ---
@@ -1554,31 +1757,33 @@ public class MainController implements Initializable {
 
                 Label wordLbl = new Label(word);
                 Label scoreLbl = new Label(res != null ? (res.isValid ? "✅ +" + res.score : "❌ 0") : "");
-                scoreLbl.setStyle(res != null && res.isValid ? "-fx-text-fill: green; -fx-font-size: 10px;"
-                        : "-fx-text-fill: red; -fx-font-size: 10px;");
+                scoreLbl.setStyle(res != null && res.isValid ? "-fx-text-fill: -success-color; -fx-font-size: 10px;"
+                        : "-fx-text-fill: -error-color; -fx-font-size: 10px;");
 
                 cell.getChildren().addAll(wordLbl, scoreLbl);
                 row.getChildren().add(cell);
             }
+
+            // AI Suggestion Column
+            VBox aiCell = new VBox(2);
+            aiCell.setPrefWidth(150);
+            aiCell.setAlignment(Pos.CENTER);
+            Label aiSuggestion = new Label("...");
+            aiSuggestion.setStyle("-fx-font-size: 11px; -fx-text-fill: -primary-color; -fx-font-style: italic;");
+            aiCell.getChildren().add(aiSuggestion);
+            row.getChildren().add(aiCell);
+
+            new Thread(() -> {
+                String suggestion = deepSeekService.suggestWord(cat, currentLetter, currentLanguage);
+                Platform.runLater(() -> aiSuggestion.setText("💡 " + suggestion));
+            }).start();
+
             resultsListBox.getChildren().add(row);
         }
-
-        // --- FOOTER RANKING ---
-        VBox rankingBox = new VBox(5);
-        rankingBox.setPadding(new Insets(20, 0, 0, 0));
-        for (int i = 0; i < sortedRankings.size(); i++) {
-            Map.Entry<String, Integer> entry = sortedRankings.get(i);
-            Label l = new Label((i + 1) + ". " + entry.getKey() + " : " + entry.getValue() + " pts "
-                    + (i == 0 ? "🏆" : ""));
-            l.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
-            rankingBox.getChildren().add(l);
-        }
-        resultsListBox.getChildren().add(rankingBox);
 
         showPane(resultsPane);
 
         // --- PERSISTENCE ---
-        String ourName = gameClient != null ? gameClient.getPlayerName() : "Player";
         int ourRank = 1;
         for (int i = 0; i < sortedRankings.size(); i++) {
             if (sortedRankings.get(i).getKey().equals(ourName)) {
@@ -1587,6 +1792,78 @@ public class MainController implements Initializable {
             }
         }
         saveGameResult(ourRank, sortedRankings.size());
+    }
+
+    @FXML
+    private void shareResults() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("🎮 *Baccalaureat Plus* - Mes Résultats\n");
+        sb.append("🔠 Lettre: ").append(currentLetter).append("\n");
+        sb.append("⭐ Score: ").append(score).append(" pts\n");
+
+        if (isMultiplayer) {
+            sb.append("👥 Mode: Multijoueur\n");
+        } else {
+            sb.append("👤 Mode: Solo\n");
+        }
+        sb.append("🔗 Télécharge BacPlus !");
+
+        String shareText = sb.toString();
+
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.setTitle("Partager les résultats");
+        alert.setHeaderText("Choisissez une méthode de partage");
+        alert.setContentText("Où voulez-vous partager votre score ?");
+
+        ButtonType btnWhatsApp = new ButtonType("WhatsApp");
+        ButtonType btnFacebook = new ButtonType("Facebook");
+        ButtonType btnCopy = new ButtonType("Copier");
+        ButtonType btnCancel = new ButtonType("Annuler", ButtonBar.ButtonData.CANCEL_CLOSE);
+
+        alert.getButtonTypes().setAll(btnWhatsApp, btnFacebook, btnCopy, btnCancel);
+
+        alert.showAndWait().ifPresent(type -> {
+            if (type == btnWhatsApp) {
+                try {
+                    String url = "https://wa.me/?text=" + URLEncoder.encode(shareText, StandardCharsets.UTF_8);
+                    openUrl(url);
+                } catch (Exception e) {
+                    showToast("Erreur lors de l'ouverture de WhatsApp");
+                }
+            } else if (type == btnFacebook) {
+                try {
+                    // Facebook only allows sharing a URL, so we share a generic link or the app
+                    // link
+                    String appUrl = "https://github.com/YekhlefAya/bacplus"; // Replace with actual URL if exists
+                    String url = "https://www.facebook.com/sharer/sharer.php?u="
+                            + URLEncoder.encode(appUrl, StandardCharsets.UTF_8)
+                            + "&quote=" + URLEncoder.encode(shareText, StandardCharsets.UTF_8);
+                    openUrl(url);
+                } catch (Exception e) {
+                    showToast("Erreur lors de l'ouverture de Facebook");
+                }
+            } else if (type == btnCopy) {
+                javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
+                javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
+                content.putString(shareText);
+                clipboard.setContent(content);
+                showToast("Résultats copiés !");
+            }
+        });
+    }
+
+    private void openUrl(String url) {
+        try {
+            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                Desktop.getDesktop().browse(new URI(url));
+            } else {
+                // Fallback for some OS/JDKs
+                Runtime.getRuntime().exec("rundll32 url.dll,FileProtocolHandler " + url);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            System.err.println("Failed to open URL: " + e.getMessage());
+        }
     }
 
     private void cleanupMultiplayer() {

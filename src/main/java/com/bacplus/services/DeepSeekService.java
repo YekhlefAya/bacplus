@@ -13,11 +13,8 @@ import org.apache.http.util.EntityUtils;
 import org.hibernate.Session;
 import org.hibernate.Transaction;
 
-import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
 public class DeepSeekService {
 
@@ -65,13 +62,14 @@ public class DeepSeekService {
     private static final Map<String, List<String>> FALLBACK_WORDS = new HashMap<>();
     static {
         FALLBACK_WORDS.put("ville", List.of(
-                "alger", "amsterdam", "athenes", "berlin", "bruxelles", "bucarest", "casablanca", "dakar", "dubai",
-                "dublin",
+                "alger", "algiers", "amsterdam", "athenes", "berlin", "bruxelles", "bucarest", "casablanca", "dakar",
+                "dubai",
+                "dublin", "agadir", "ifrane", "oujda", "kenitra", "meknes", "tetouan", "nador", "safi", "el jadida",
                 "fes", "geneve", "helsinki", "istanbul", "jerusalem", "lisbonne", "londres", "luxembourg", "madrid",
-                "marrakech",
+                "marrakech", "ouarzazate", "essaouira", "taroudant", "khouribga", "beni mellal",
                 "mexico", "moscou", "monaco", "nairobi", "oslo", "ottoman", "paris", "pekin", "prague", "quebec",
-                "rabat", "rome",
-                "seoul", "stockholm", "tanger", "tokyo", "tunis", "vienne", "washington", "yaounde", "zurich"));
+                "rabat", "rome", "tanger",
+                "seoul", "stockholm", "tokyo", "tunis", "vienne", "washington", "yaounde", "zurich"));
 
         FALLBACK_WORDS.put("pays", List.of(
                 "afghanistan", "algerie", "allemagne", "andorre", "angola", "argentine", "australie", "autriche",
@@ -112,13 +110,16 @@ public class DeepSeekService {
 
         FALLBACK_WORDS.put("prénom", List.of(
                 "alice", "anne", "arthur", "axel", "beatrice", "benjamin", "camille", "claire", "david", "denis",
-                "elodie",
+                "elodie", "aya", "ahmed", "amine", "ali", "anis", "anouar", "asma", "amal", "achraf", "adam",
                 "emma", "eric", "fabrice", "florence", "gabriel", "guillaume", "helene", "hugo", "ines", "isabelle",
-                "jean",
+                "jean", "fatima", "fatoumata", "fouad", "farid", "faycal", "fatiha", "fadel",
                 "julie", "karine", "kevin", "laura", "louis", "marc", "marie", "nicolas", "noemi", "olivier", "paul",
-                "pierre",
-                "quentin", "raphael", "sarah", "sophie", "thomas", "ulysse", "valerie", "victor", "william", "xavier",
-                "yann", "yassine", "zoe"));
+                "pierre", "mohamed", "mustapha", "mouna", "meriem", "mehdi", "myriam", "mourad",
+                "quentin", "raphael", "sarah", "sophie", "thomas", "ulysse", "ursule", "ugo", "umar", "urielle",
+                "ulrich",
+                "valerie", "victor", "william", "xavier",
+                "yann", "yassine", "youssef", "yahya", "younes", "yasmina", "yasmine", "youness", "zoe", "zakaria",
+                "zaynab"));
 
         FALLBACK_WORDS.put("marque", List.of(
                 "adidas", "apple", "audi", "bmw", "chanel", "cocacola", "danone", "dell", "disney", "ebay", "ford",
@@ -194,7 +195,8 @@ public class DeepSeekService {
             "pays", Set.of("azer", "tyui"),
             "ville", Set.of("opqr", "lmno"));
 
-    public static class ValidationResult {
+    public static class ValidationResult implements java.io.Serializable {
+        private static final long serialVersionUID = 1L;
         public boolean isValid;
         public String message;
         public int score;
@@ -308,8 +310,30 @@ public class DeepSeekService {
     private void saveToCache(String category, String word, boolean isValid, String source, String language) {
         try (Session session = HibernateUtil.getSessionFactory().openSession()) {
             Transaction tx = session.beginTransaction();
+
+            // 1. Sauvegarder le mot validé
             ValidatedWord vw = new ValidatedWord(word, category.toLowerCase(), isValid, source, language);
             session.save(vw);
+
+            // 2. Si valide, synchroniser le compteur de la catégorie
+            if (isValid) {
+                try {
+                    com.bacplus.models.Category catEntity = session
+                            .createQuery("FROM Category WHERE lower(name) = :name", com.bacplus.models.Category.class)
+                            .setParameter("name", category.toLowerCase().trim())
+                            .uniqueResult();
+
+                    if (catEntity != null) {
+                        catEntity.setWordCount(catEntity.getWordCount() + 1);
+                        session.update(catEntity);
+                        System.out.println("[DB-SYNC] Compteur incrémenté pour: " + category);
+                    }
+                } catch (Exception catEx) {
+                    System.err
+                            .println("⚠️ Impossible de mettre à jour le compteur de catégorie: " + catEx.getMessage());
+                }
+            }
+
             tx.commit();
         } catch (Exception e) {
             System.err.println("Erreur Sauvegarde Cache: " + e.getMessage());
@@ -330,23 +354,92 @@ public class DeepSeekService {
                     + " (origin: " + category + "), letter: "
                     + letter + ", word: " + word);
 
-            String systemPrompt = String.format("""
-                    TU ES UN VALIDATEUR DE MOTS POUR LE JEU "BACCALAUREAT+".
-                    RÈGLES STRICTES DE VALIDATION :
-                    1. LANGUE : Le mot doit exister en %s
-                    2. CATÉGORIE : Le mot doit APPARTENIR à la catégorie : %s
-                    3. LETTRE : Le mot doit COMMENCER par la lettre : %s
-                    4. VALIDITÉ : Le mot doit être un mot RÉEL, pas inventé
-                    5. APPROPRIÉ : Le mot doit être LOGIQUE pour la catégorie
+            String systemPrompt = String.format(
+                    """
+                            🔍 **SYSTÈME DE VALIDATION PRÉCIS POUR BACCALAUREAT+**
 
-                    MOT À VALIDER : "%s"
+                            # RÔLE
+                            Tu es un validateur de mots **PRÉCIS MAIS RAISONNABLE** pour le jeu Baccalaureat+.
 
-                    RÉPONDS UNIQUEMENT EN JSON :
-                    {
-                      "valide": true/false,
-                      "raison": "explication courte en %s"
-                    }
-                    """, langName, translatedCat, letter, word, langName);
+                            # RÈGLES CLAIRES ET PRÉCISES
+
+                            ## 1. LANGUE - CRITÈRE STRICT
+                            ✅ **ACCEPTE UNIQUEMENT** les mots qui existent en **%s**
+                            ❌ REFUSE les mots qui n'existent qu'en d'autres langues
+
+                            EXCEPTION SPÉCIFIQUE :
+                            • Pour la catégorie **"PRÉNOM"** uniquement : Accepte les prénoms de TOUTES les cultures
+                              Exemples acceptés : Mohamed (arabe), Wei (chinois), Jean (français), Maria (espagnol)
+
+                            ## 2. CATÉGORIE - INTERPRÉTATION PRÉCISE
+                            CATÉGORIE À VALIDER : **%s**
+
+                            RÈGLES PAR CATÉGORIE :
+
+                            • **"PRÉNOM"** → ✅ Prénoms de TOUTES cultures (arabe, français, anglais, asiatique, africain...)
+                                              ✅ Noms personnels reconnus internationalement
+
+                            • **"PAYS"** → ✅ Noms de pays en **%s** (France, Maroc, Espagne...)
+                                           ❌ Noms dans d'autres langues (Germany au lieu de Allemagne)
+
+                            • **"VILLE"** → ✅ Noms de villes en **%s** (Paris, Casablanca, Londres...)
+                                            ✅ Villes internationales avec leur nom local
+
+                            • **"ANIMAL"** → ✅ Noms d'animaux en **%s** (Lion, Chat, Éléphant...)
+                                             ❌ Noms scientifiques latins
+
+                            • **"MÉTIER"** → ✅ Professions en **%s** (Médecin, Ingénieur, Enseignant...)
+
+                            • **"MARQUE"** → ✅ Marques commerciales connues
+
+                            • **"OBJET"** → ✅ Objets en **%s** (Chaise, Livre, Téléphone...)
+
+                            • **"CÉLÉBRITÉ"** → ✅ Personnes célèbres connues internationalement
+
+                            ## 3. LETTRE - CRITÈRE ABSOLU
+                            ✅ Le mot DOIT COMMENCER par la lettre : **%s**
+                            ❌ Rejette immédiatement si première lettre différente
+
+                            ## 4. VÉRIFICATION RÉALITÉ
+                            ✅ Le mot doit exister/référencer quelque chose de réel
+                            ❌ Pas de mots inventés, fantaisistes ou aléatoires
+
+                            # MOT À VALIDER : **"%s"**
+
+                            # DÉCISION PAR DÉFAUT
+                            • **En cas de doute** → Vérifie si le mot existe en %s
+                            • **Si existence confirmée** → Accepte
+                            • **Si inexistant** → Refuse
+
+                            # FORMAT DE RÉPONSE
+                            {
+                              "valide": true/false,
+                              "raison": "explication courte en %s"
+                            }
+
+                            # EXEMPLES D'ACCEPTATION
+                            • "Mohamed" pour "PRÉNOM" → ACCEPTE (prénom arabe international)
+                            • "Paris" pour "VILLE" → ACCEPTE (ville française)
+                            • "Maroc" pour "PAYS" → ACCEPTE (pays en français)
+                            • "Chat" pour "ANIMAL" → ACCEPTE (animal en français)
+
+                            # EXEMPLES DE REJET
+                            • "Germany" pour "PAYS" → REFUSE (doit être "Allemagne" en français)
+                            • "Book" pour "OBJET" → REFUSE (doit être "Livre" en français)
+                            • "Xmabd" pour n'importe quoi → REFUSE (mot inventé)
+                            • "Paris" avec lettre "M" → REFUSE (commence par P, pas M)
+                            """,
+                    langName,
+                    translatedCat,
+                    langName,
+                    langName,
+                    langName,
+                    langName,
+                    langName,
+                    letter,
+                    word,
+                    langName,
+                    langName);
 
             String jsonBody = mapper.createObjectNode()
                     .put("model", "deepseek-chat")
@@ -392,24 +485,10 @@ public class DeepSeekService {
     }
 
     public String suggestWord(String category, String letter, String language) {
-        System.out.println("[Suggestion] Recherche pour " + category + " avec " + letter);
+        System.out.println(
+                "[Suggestion] Seeking word for " + category + " starting with " + letter + " (" + language + ")");
 
-        // 1. Try Fallback List tailored to categories (Only for French)
-        List<String> tailWords = null;
-        if ("fr".equalsIgnoreCase(language)) {
-            tailWords = FALLBACK_WORDS.get(category.toLowerCase());
-            if (tailWords != null) {
-                String match = tailWords.stream()
-                        .filter(w -> w.toUpperCase().startsWith(letter.toUpperCase()))
-                        .findFirst().orElse(null);
-                if (match != null) {
-                    System.out.println("✅ Suggestion (Local Fallback FR): " + match);
-                    return match;
-                }
-            }
-        }
-
-        // 2. Fallback API
+        // 1. PRIMARY: Try DeepSeek API for fresh and diverse suggestions
         try (CloseableHttpClient client = HttpClients.createDefault()) {
             HttpPost post = new HttpPost(API_URL);
             post.setHeader("Content-Type", "application/json");
@@ -419,7 +498,9 @@ public class DeepSeekService {
             String translatedCat = getCategoryInLanguage(category, language);
 
             String prompt = String.format(
-                    "Tu es un expert du jeu Baccalaureat. Donne-moi UN SEUL mot en %s pour la catégorie '%s' commençant par la lettre '%s'. Réponds juste le mot, sans ponctuation.",
+                    "Tu es un expert du jeu Baccalaureat. Donne-moi UN SEUL mot original et vrai en %s pour la catégorie '%s' commençant par la lettre '%s'. "
+                            + "N'hésite pas à proposer des noms propres, prénoms arabes ou villes internationales (ex: Agadir, Fatima, etc. si applicable). "
+                            + "Réponds juste le mot, sans ponctuation.",
                     langName, translatedCat, letter);
 
             String jsonBody = mapper.createObjectNode()
@@ -432,27 +513,34 @@ public class DeepSeekService {
 
             try (CloseableHttpResponse response = client.execute(post)) {
                 String responseBody = EntityUtils.toString(response.getEntity());
-                System.out.println("[DEBUG] suggestWord API Response Body: " + responseBody);
                 JsonNode root = mapper.readTree(responseBody);
                 if (root.has("choices") && root.get("choices").size() > 0) {
                     String suggestion = root.get("choices").get(0).get("message").get("content").asText().trim();
-                    // Clean suggestion (remove trailing dots etc)
                     suggestion = suggestion.replaceAll("[^\\p{L}\\s-]", "");
-                    System.out.println("✅ Suggestion (API): " + suggestion);
-                    return suggestion;
+                    if (!suggestion.isEmpty() && suggestion.toUpperCase().startsWith(letter.toUpperCase())) {
+                        System.out.println("✅ Suggestion (API): " + suggestion);
+                        return suggestion;
+                    }
                 }
             }
         } catch (Exception e) {
-            System.err.println("Erreur Suggestion API: " + e.getMessage());
+            System.err.println("⚠️ API Suggestion Error: " + e.getMessage());
         }
 
-        // 3. Ultimate Fallback (Must respect the letter!)
-        if (tailWords != null) {
-            String match = tailWords.stream()
-                    .filter(w -> w.toUpperCase().startsWith(letter.toUpperCase()))
-                    .findFirst().orElse(null);
-            if (match != null)
-                return match;
+        // 2. FALLBACK: Use local randomized list if API fails
+        if ("fr".equalsIgnoreCase(language)) {
+            List<String> tailWords = FALLBACK_WORDS.get(category.toLowerCase());
+            if (tailWords != null) {
+                List<String> matches = tailWords.stream()
+                        .filter(w -> w.toUpperCase().startsWith(letter.toUpperCase()))
+                        .collect(Collectors.toList());
+                if (!matches.isEmpty()) {
+                    Collections.shuffle(matches);
+                    String match = matches.get(0);
+                    System.out.println("✅ Suggestion (Local Fallback - Randomized): " + match);
+                    return match;
+                }
+            }
         }
 
         return letter.toUpperCase() + "...";
